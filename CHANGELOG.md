@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-02
+
 ### Added
 
 - `DesktopInputLock.hold` and `.acquire`, with `#release`, `#speaks?`, `#call_back`, `#tick`, and `#finish`: the desktop input lock and its spoken notices, extracted from Lota's `tasks/desktop_input.rb`, with its protocol unchanged.

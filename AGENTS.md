@@ -46,7 +46,8 @@ Pre-1.0. Its users are the maintainer's own projects, so record every change the
 The maintainer uses three words for how work comes to exist. *Written* means typed by hand, with nothing generated. *Wrought* means an agent generated it while the maintainer iterated with it and reviewed every change before committing it. *Requested* means an agent built it with little or no review.
 
 - **In DesktopInputLock, everything is requested.** Because no one reviews this work line by line, the gates and the real-process tests review it. Never weaken a gate to make requested work pass.
-- **Decisions** that belong to the maintainer as product owner go to the maintainer as questions, never as decisions: the public interface, the protocol, the license, and anything that publishes outside this repository. Do not wait for an answer, and do not decide silently: pick a sensible default that is easy to reverse, build on it, and record the question in `doc/contributors/questions.md` with its context, the default chosen, and how to reverse it. When the maintainer answers, record the answer in an ADR or the plan and remove the question.
+- **Engineering decisions are the agents'.** The maintainer reads this project as a Director of Engineering would: what it unblocks, and whether it is good. Interface names, options, paths, modes, and test design are engineering calls. Make them, explain them in the plan or an ADR, and coordinate them with the projects that depend on them.
+- **Decisions** that belong to the maintainer go to the maintainer as questions: licenses, publishing to RubyGems.org, and a change to the protocol that changes what the person at the computer sees or hears. Do not wait for an answer, and do not decide silently: pick a sensible default that is easy to reverse, build on it, and record the question in `doc/contributors/questions.md` with its context, the default chosen, and how to reverse it, in terms of what it means for the projects and the people using them. When the maintainer answers, record the answer in an ADR or the plan and remove the question.
 - **Generated code** is marked as generated in its header and is never edited by hand; change the generator instead.
 
 Every commit carries a `Provenance: requested` trailer.
@@ -60,7 +61,14 @@ Every commit carries a `Provenance: requested` trailer.
 
 ## Releasing
 
-Publishing to RubyGems.org is a human-only activity: no agent runs `gem push`, ever. `rake release` refuses, and the gemspec requires MFA, so a push asks a person for their one-time password. A person builds and pushes the gem by hand. Tagging a version (`vX.Y.Z`) is the maintainer's call, so it goes to the maintainer as a question.
+Publishing to RubyGems.org is a human-only activity: no agent runs `gem push`, ever. `rake release` refuses, and the gemspec requires MFA, so a push asks a person for their one-time password. A person builds and pushes the gem by hand.
+
+Before 1.0.0, an orchestration agent or a solo agent (never a sub-agent) may tag a version and publish it as a GitHub Release, once the gate and CI pass for the commit on `trunk`:
+
+- `0.0.X.pre.Y` (tag `v0.0.X.pre.Y`) while the gem is not yet ready for other libraries and gems to try.
+- `0.X.Y`, by Semantic Versioning, once it is.
+
+Each release moves CHANGELOG.md's `[Unreleased]` entries under the new version, sets `VERSION`, and names the release after its tag. Version 1.0.0 is the maintainer's call.
 
 ## Changelog
 
