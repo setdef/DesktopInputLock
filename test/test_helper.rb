@@ -78,11 +78,16 @@ module DesktopHelper
 
   def run_script(root, code, err: nil, **) = reap(spawn_script(root, code, err:, **))
 
-  # Waits for the process +pid+ to end, killing it if it has not in ten
-  # seconds, so a test that fails leaves nothing running. Returns its
+  # How long a test waits for something that should happen at once
+  # before it fails. Only a broken lock reaches it, so it is generous:
+  # a loaded machine can take seconds to start a process.
+  GUARD = 30
+
+  # Waits for the process +pid+ to end, killing it if it has not within
+  # GUARD, so a test that fails leaves nothing running. Returns its
   # status.
   def reap(pid)
-    Timeout.timeout(10) { Process.wait2(pid).last }
+    Timeout.timeout(GUARD) { Process.wait2(pid).last }
   rescue Timeout::Error
     Process.kill(:KILL, pid)
     Process.wait(pid)
@@ -105,15 +110,22 @@ module DesktopHelper
 
   def wait_for(path) = wait_until { File.exist?(path) }
 
-  def wait_until(&) = Timeout.timeout(5) { sleep 0.01 until yield }
+  def wait_until(&) = Timeout.timeout(GUARD) { sleep 0.01 until yield }
 
-  # What another process says of the lock at +lock+: that it got it
-  # within a second, or, having said it was waiting, that it waited.
+  # What another process says of the lock at +lock+: <tt>"got it\n"</tt>
+  # when it takes the lock, or, when it says it is waiting for it,
+  # WAITING and <tt>"waited\n"</tt>, after which it is stopped. Whichever
+  # it says first decides, so no time limit does.
   def try_from_another_process(root, lock: File.join(root, "lock"))
-    script = "require 'desktop_input_lock'; require 'timeout'\n" \
+    script = "$stderr.sync = true; require 'desktop_input_lock'\n" \
       "input = DesktopInputLock.new(lock: #{lock.dump}, marker: File.join(ARGV[0], 'away'), settle: #{SETTLE})\n" \
-      "begin; Timeout.timeout(1) { input.hold(speak: false) { } }; puts 'got it'; " \
-      "rescue Timeout::Error; puts 'waited'; end"
-    Open3.capture2e(RbConfig.ruby, "-I", LIB, "-e", script, root).first
+      "input.hold(speak: false) { }; $stderr.puts 'got it'"
+    Open3.popen2e(RbConfig.ruby, "-I", LIB, "-e", script, root) do |_, output, thread|
+      line = Timeout.timeout(GUARD) { output.gets }
+      next line if line == "got it\n"
+
+      Process.kill(:KILL, thread.pid)
+      "#{line}waited\n"
+    end
   end
 end

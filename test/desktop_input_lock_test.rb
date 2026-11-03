@@ -79,13 +79,18 @@ class DesktopInputLockTest < Minitest::Test
 
   # A process that exits as soon as it lets go leaves the lock to one
   # already waiting for it, held up here so that the exiting one would
-  # get there first, and so leaves the call back to that one.
+  # get there first, and so leaves the call back to that one. The exiting
+  # one settles in three seconds, so the waiting one is let go well
+  # within them, however loaded the machine.
   def test_a_process_exiting_as_it_lets_go_leaves_the_call_back_to_one_waiting
     in_desktop do |root|
-      first = spawn_script(root, "input.hold { File.write(File.join(dir, 'first'), ''); hand_over_to('second') }; " \
+      first = spawn_script(root, "input = DesktopInputLock.new(lock: File.join(dir, 'lock'), " \
+        "marker: File.join(dir, 'away'), say: File.join(dir, 'say'), osascript: File.join(dir, 'osascript'), " \
+        "settle: 3, env: {}, host_os: 'darwin')\n" \
+        "input.hold { File.write(File.join(dir, 'first'), ''); hand_over_to('second') }; " \
         "File.write(File.join(dir, 'released'), '')")
       wait_for(File.join(root, "first"))
-      second = spawn_script(root, "input.hold { sleep #{SETTLE * 3} }", err: "second")
+      second = spawn_script(root, "input.hold { sleep #{SETTLE} }", err: "second")
       begin
         wait_until { File.exist?(File.join(root, "second")) && File.read(File.join(root, "second")).include?(DesktopInputLock::WAITING) }
         Process.kill(:STOP, second)
@@ -102,17 +107,24 @@ class DesktopInputLockTest < Minitest::Test
   end
 
   # A process whose spans settled long before it exits has already called
-  # the person back, so it exits without waiting out SETTLE again.
+  # the person back, so its exit calls back without waiting out SETTLE
+  # again. Its settle is long here, so the call back it does make at once
+  # takes a sliver of it, however loaded the machine.
   def test_an_exit_after_it_settles_calls_back_without_waiting
     in_desktop do |root|
-      code = "input.hold { }; sleep 0.01 until File.exist?(File.join(dir, 'said')) && " \
-        "File.readlines(File.join(dir, 'said')).size == 4; " \
-        "File.write(File.join(dir, 'exiting'), Process.clock_gettime(Process::CLOCK_MONOTONIC).to_s)"
+      code = "input = DesktopInputLock.new(lock: File.join(dir, 'lock'), marker: File.join(dir, 'away'), " \
+        "say: File.join(dir, 'say'), osascript: File.join(dir, 'osascript'), settle: 2, env: {}, host_os: 'darwin')\n" \
+        "input.hold { }; sleep 0.01 until File.exist?(File.join(dir, 'said')) && " \
+        "File.readlines(File.join(dir, 'said')).size == 4\n" \
+        "started = Process.clock_gettime(Process::CLOCK_MONOTONIC)\n" \
+        "result = input.finish\n" \
+        "File.write(File.join(dir, 'finish'), [result, Process.clock_gettime(Process::CLOCK_MONOTONIC) - started].join(' '))"
       run_script(root, code)
-      exited = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      result, took = File.read(File.join(root, "finish")).split
 
       assert_equal told(DesktopInputLock::STEP_AWAY, DesktopInputLock::COME_BACK), said(root)
-      assert_operator exited - Float(File.read(File.join(root, "exiting"))), :<, SETTLE
+      assert_equal "gone", result
+      assert_operator Float(took), :<, 1
     end
   end
 
@@ -130,24 +142,26 @@ class DesktopInputLockTest < Minitest::Test
     end
   end
 
-  # A say that never finishes would hold the watcher's call back, and so
-  # the process's exit, which waits for it, for good. Each thing said gets
-  # at most its limit before it is stopped, so the process exits; the
-  # banner was shown first, and the words were not said.
+  # A say that never finishes would hold the call back, and so the
+  # process's exit, which waits for it, for good. Each thing said gets at
+  # most its limit, so the process exits. Here the voice is the only
+  # command run, since a marker of a live process (this one) means
+  # nothing asks the person to step away and there is no banner, so a
+  # short limit stops only the hanging voice, however slowly a loaded
+  # machine starts it. Without the limit the process outlives GUARD.
   def test_a_say_that_hangs_is_stopped_so_the_process_still_exits
     in_desktop do |root|
-      script(root, "say", "case \"$1\" in *'come back'*) touch \"#{root}/telling\"; exec sleep 60;; esac\n" \
-        "printf 'say: %s\\n' \"$1\" >> \"#{root}/said\"")
+      File.delete(File.join(root, "osascript"))
+      script(root, "say", "exec sleep 600")
+      File.write(File.join(root, "away"), "#{Process.pid} 0")
       code = "input = DesktopInputLock.new(lock: File.join(dir, 'lock'), marker: File.join(dir, 'away'), " \
         "say: File.join(dir, 'say'), osascript: File.join(dir, 'osascript'), settle: #{SETTLE}, env: {}, " \
         "host_os: 'darwin', tell_limit: 0.5)\n" \
-        "input.hold { }; sleep 0.01 until File.exist?(File.join(dir, 'telling'))"
-      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      run_script(root, code)
+        "input.hold { }"
 
-      assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 5
-      assert_equal [*told(DesktopInputLock::STEP_AWAY), told(DesktopInputLock::COME_BACK).first], said(root)
+      assert_predicate run_script(root, code), :success?
       refute_path_exists File.join(root, "away")
+      assert_empty said(root)
     end
   end
 
@@ -234,7 +248,7 @@ class DesktopInputLockTest < Minitest::Test
   def test_spans_nest_and_the_last_lets_go
     in_desktop do |root|
       outer = input(root).acquire(speak: false)
-      Timeout.timeout(1) { outer.hold(speak: false) { nil } }
+      Timeout.timeout(GUARD) { outer.hold(speak: false) { nil } }
 
       assert_equal "#{DesktopInputLock::WAITING}\nwaited\n", try_from_another_process(root)
 
@@ -252,7 +266,7 @@ class DesktopInputLockTest < Minitest::Test
       done = Queue.new
       thread = Thread.new { held.hold(speak: false) { inside << true; done.pop } }
       inside.pop
-      Timeout.timeout(1) { held.hold(speak: false) { nil } }
+      Timeout.timeout(GUARD) { held.hold(speak: false) { nil } }
 
       assert_equal "#{DesktopInputLock::WAITING}\nwaited\n", try_from_another_process(root)
     ensure
@@ -375,7 +389,7 @@ class DesktopInputLockTest < Minitest::Test
     in_desktop do |root|
       assert_raises(RuntimeError) { input(root).hold(speak: false) { raise "boom" } }
 
-      Timeout.timeout(1) { input(root).hold(speak: false) { nil } }
+      Timeout.timeout(GUARD) { input(root).hold(speak: false) { nil } }
     end
   end
 
