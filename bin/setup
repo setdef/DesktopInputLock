@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Kerrick Long <me@kerricklong.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+set -euo pipefail
+IFS=$'\n\t'
+set -vx
+
+if command -v mise >/dev/null 2>&1; then
+  # Ruby, the REUSE tool, actionlint, and shellcheck, pinned in mise.toml
+  mise install
+  mise x -- bundle install
+  mise x -- pre-commit install
+  mise x -- bundle exec rake rdoc
+else
+  echo "mise isn't installed. Please install it to continue." >&2
+  exit 1
+fi

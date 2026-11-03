@@ -1,0 +1,158 @@
+# SPDX-FileCopyrightText: 2026 Kerrick Long <me@kerricklong.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# The gate contributors run, bundle exec rake, on every push and pull
+# request; then the tests alone on each operating system the lock runs
+# on.
+#
+# The gate runs once, on Linux: its lints (RuboCop, Steep, RDoc
+# coverage, REUSE, actionlint) read the same files on every OS, so one
+# run answers for all three. The tests run on all three, because flock,
+# the process signals the tests use, and what the lock does differ by
+# OS: macOS speaks, Linux only locks, and Windows does neither unless
+# given paths. Nothing here publishes to RubyGems.org; a person does
+# that (AGENTS.md, Releasing).
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # mise installs Ruby from jdx/ruby's precompiled builds where they exist
+  # (mise's Ruby documentation); false makes a missing build fail instead
+  # of compiling Ruby for ten minutes.
+  MISE_RUBY_COMPILE: "false"
+  # Install exactly what Gemfile.lock locks, or fail.
+  BUNDLE_FROZEN: "true"
+
+jobs:
+  gate:
+    name: Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # mise.toml pins the tools contributors use (bin/setup): Ruby, the
+      # REUSE tool, actionlint, and shellcheck. CI installs the same pins
+      # the same way. Its cache is keyed by mise.toml's hash.
+      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+        with:
+          version: 2026.10.11
+
+      # Bundler keeps its files outside the checkout, where RuboCop and
+      # the REUSE tool would read them.
+      - name: Place Bundler outside the checkout
+        id: paths
+        run: |
+          echo "BUNDLE_PATH=$HOME/.cache/desktop_input_lock/bundle" >> "$GITHUB_ENV"
+          echo "ruby=$(ruby -e 'print RUBY_VERSION, "-", RUBY_PLATFORM')" >> "$GITHUB_OUTPUT"
+
+      # Gems with native extensions compile against one Ruby on one OS, so
+      # the key names both, with the lockfile. Only an exact match
+      # restores.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/desktop_input_lock/bundle
+          key: gems-${{ runner.os }}-${{ steps.paths.outputs.ruby }}-${{ hashFiles('Gemfile.lock') }}
+
+      - name: Install the bundle
+        run: bundle install
+
+      # Minitest prints each test's name and time (A is Minitest::TestTask's
+      # argument variable), so a stuck test shows which it is.
+      - name: Run the gate
+        timeout-minutes: 15
+        env:
+          A: --verbose
+        run: bundle exec rake
+
+      # The gate starts with lint:fix, which corrects RuboCop offenses and
+      # adds missing license headers, so an offense would pass as a fix
+      # nobody committed. A changed or new file fails here instead.
+      - name: Fail if the gate changed a file
+        run: |
+          changes=$(git status --porcelain)
+          if [ -n "$changes" ]; then
+            echo "$changes"
+            git diff
+            echo "::error::bundle exec rake changed files; run it locally and commit what it changes"
+            exit 1
+          fi
+
+  # The tests alone, on each OS: macos-15 is Apple Silicon, named
+  # rather than macos-latest, which moves to each new macOS.
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The tests need only Ruby, so mise installs only Ruby, at
+      # mise.toml's pin, as on a contributor's machine.
+      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+        if: runner.os != 'Windows'
+        with:
+          version: 2026.10.11
+          install_args: ruby
+
+      - name: Place Bundler outside the checkout
+        if: runner.os != 'Windows'
+        id: paths
+        run: |
+          echo "BUNDLE_PATH=$HOME/.cache/desktop_input_lock/bundle" >> "$GITHUB_ENV"
+          echo "ruby=$(ruby -e 'print RUBY_VERSION, "-", RUBY_PLATFORM')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: runner.os != 'Windows'
+        with:
+          path: ~/.cache/desktop_input_lock/bundle
+          key: gems-${{ runner.os }}-${{ steps.paths.outputs.ruby }}-${{ hashFiles('Gemfile.lock') }}
+
+      - name: Install the bundle
+        if: runner.os != 'Windows'
+        run: bundle install
+
+      # Windows takes RubyInstaller's Ruby through setup-ruby, at the
+      # version mise.toml pins, as ratatui_ruby's CI does. mise stays
+      # out of this job on Windows: the tests need no other tool it pins,
+      # so there is nothing left for it to install once its Ruby is
+      # disabled. setup-ruby installs the bundle and caches it.
+      - name: Read the Ruby pin
+        if: runner.os == 'Windows'
+        id: pins
+        run: echo "ruby=$(sed -n 's/^ruby = "\(.*\)"$/\1/p' mise.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
+        if: runner.os == 'Windows'
+        with:
+          ruby-version: ${{ steps.pins.outputs.ruby }}
+          bundler-cache: true
+
+      - name: Run the tests
+        timeout-minutes: 10
+        env:
+          A: --verbose
+        run: bundle exec rake test

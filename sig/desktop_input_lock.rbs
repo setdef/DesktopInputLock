@@ -1,0 +1,91 @@
+# SPDX-FileCopyrightText: 2026 Kerrick Long <me@kerricklong.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+class DesktopInputLock
+  interface _Env
+    def []: (String) -> String?
+  end
+
+  interface _Log
+    def puts: (String) -> void
+  end
+
+  LOCK: String
+  MARKER: String
+  SAY: String
+  OSASCRIPT: String
+  SETTLE: Integer
+  STEP_AWAY: String
+  COME_BACK: String
+  WAITING: String
+  TELL_LIMIT: Integer
+  SESSION_LOCK: String
+  DEFAULT: DesktopInputLock
+
+  def self.paths: (_Env env, String host_os) -> [String?, String?]
+
+  def self.hold: [T] (?speak: bool) { () -> T } -> T
+
+  def self.acquire: (?speak: bool) -> DesktopInputLock
+
+  def initialize: (?lock: String?, ?marker: String?, ?say: String, ?osascript: String, ?settle: Integer | Float,
+    ?env: _Env, ?host_os: String, ?log: _Log, ?tell_limit: Integer | Float) -> void
+
+  def hold: [T] (?speak: bool) { () -> T } -> T
+
+  def acquire: (?speak: bool) -> self
+
+  def release: () -> void
+
+  def speaks?: () -> bool
+
+  def tick: () -> void
+
+  def call_back: () -> (:called | :busy | :gone)
+
+  def finish: () -> (:called | :busy | :gone)
+
+  private
+
+  @lock: String?
+  @marker: String?
+  @say: String
+  @osascript: String
+  @settle: Integer | Float
+  @env: _Env
+  @host_os: String
+  @log: _Log
+  @tell_limit: Integer | Float
+  @state: Monitor
+  @depth: Integer
+  @file: File?
+  @pending: bool
+  @last_done: Float?
+  @watcher: Thread?
+
+  def take: () -> void
+
+  def announce: () -> void
+
+  def open_lock: (String path) -> File
+
+  def step_away: () -> void
+
+  def share: (String path) -> void
+
+  def warned_by_a_live_process?: () -> bool
+
+  def alive?: (Integer pid) -> bool
+
+  def start_watcher: () -> Thread
+
+  def come_back: () -> (:called | :busy | :gone)
+
+  def come_back_holding: (File file, String marker) -> (:called | :busy | :gone)
+
+  def tell: (String words) -> void
+
+  def run: (*String command) -> void
+
+  def now: () -> Float
+end

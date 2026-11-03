@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2026 Kerrick Long <me@kerricklong.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+class DesktopInputLock
+  class CLI
+    interface _Output
+      def puts: (String) -> void
+    end
+
+    FORWARDED: Array[String]
+
+    @help_path: String
+    @out: _Output
+    @err: _Output
+    @input: DesktopInputLock
+
+    def initialize: (help_path: String, ?out: _Output, ?err: _Output, ?input: DesktopInputLock) -> void
+
+    def call: (Array[String] argv) -> Integer
+
+    def help: () -> String
+
+    private def missing_header: () -> ArgumentError
+
+    private def hold: (Array[String] arguments) -> Integer
+
+    private def run_child: (Array[String] command) -> Integer
+
+    private def pass_on: (String signal, Integer pid) -> void
+
+    private def succeed_with: (String text) -> Integer
+
+    private def fail_with: (String text, ?status: Integer) -> Integer
+  end
+end

@@ -1,0 +1,11 @@
+== Keep Tests That Take the Keyboard and Mouse Out of Each Other's Way
+
+A computer has one pointer, and one window at a time has the keyboard.
+Tests that open real menus, bring a window to the front, or move the
+pointer fail when another project's tests take them at the same time.
+DesktopInputLock holds one lock that every such test shares, across
+processes and projects, and tells the person at a Mac, by banner and
+aloud, when to step away and when to come back.
+
+It is extracted from the copies in Lota, Tokra, and Deckbuilder, and
+ships a +desktop_input_lock+ command for shell scripts. Source: https://github.com/setdef/DesktopInputLock

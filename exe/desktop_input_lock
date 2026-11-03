@@ -1,0 +1,78 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+#--
+# SPDX-FileCopyrightText: 2026 Kerrick Long <me@kerricklong.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#++
+
+####
+# ======================================================================
+# desktop_input_lock - Run a command holding the desktop input lock
+# ======================================================================
+#
+# SYNOPSIS
+#     desktop_input_lock hold [--speak] [--] COMMAND [ARGS...]
+#     desktop_input_lock --help
+#     desktop_input_lock --version
+#
+# DESCRIPTION
+#     Run COMMAND while holding the lock that tests taking the keyboard
+#     and mouse share, so it never lands its clicks and keystrokes in
+#     another program's windows, and another program's never land in
+#     its own.
+#
+#     A shell script has no flock(1) on macOS, and a lock taken by one
+#     project's tests means nothing to another's unless both take the
+#     same file the same way. This command takes the one every project
+#     agrees on, waits for it if another process holds it, runs
+#     COMMAND, and lets go when COMMAND ends.
+#
+#     It is silent by default. With --speak, the person at a Mac is
+#     told by banner and aloud to step away, and called back once no
+#     test has needed the keyboard for three seconds.
+#
+# COMMANDS
+#     hold               Run COMMAND holding the lock.
+#
+# OPTIONS
+#     --speak            Ask the person at a Mac to step away, and call
+#                        them back afterward
+#     --                 End the options; what follows is COMMAND
+#     -h, --help         Show this help
+#     -V, --version      Print the version
+#
+# ENVIRONMENT
+#     DESKTOP_INPUT_LOCK   A lock of this session's own, in place of
+#                          /tmp/desktop-input.lock
+#     DESKTOP_INPUT_QUIET  Never speak, even with --speak
+#     CI                   Never speak, even with --speak
+#
+# FILES
+#     /tmp/desktop-input.lock  The lock every project shares
+#     /tmp/desktop-input.away  Says the person was asked to step away
+#
+# EXIT STATUS
+#     COMMAND's own      When COMMAND runs
+#     128 + N            When signal N ends COMMAND
+#     126                When COMMAND cannot be run
+#     127                When COMMAND is not found
+#     1                  Bad arguments
+#
+#     INT, TERM, and HUP sent to this command are passed on to COMMAND.
+#
+# EXAMPLES
+#     Run a script that drives the iOS Simulator:
+#     desktop_input_lock hold -- bin/drive-simulator --device iPhone
+#
+#     Run a long check that should ask the person to step away:
+#     desktop_input_lock hold --speak -- bundle exec rake test:gui
+#
+# ======================================================================
+###
+# DesktopInputLock is requested: an AI agent built it, with little or no
+# review from a person. Its gates and its real-process tests review it
+# instead.
+
+require "desktop_input_lock/cli"
+exit DesktopInputLock::CLI.new(help_path: __FILE__).call(ARGV)
