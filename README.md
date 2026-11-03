@@ -86,6 +86,10 @@ It locks `/tmp/desktop-input.lock` on macOS and Linux, on CI too, and even when 
 
 It speaks only on macOS, outside CI, and unless `DESKTOP_INPUT_QUIET` is set. Each message shows first as a Notification Center banner, which takes no focus, for a person whose sound is off, then is said with `say`. A Mac with neither `osascript` nor `say` stays silent.
 
+### Testing your own use of it
+
+Give `DesktopInputLock.new` paths of your test's own (`lock:`, `marker:`) and stand-ins for `say:` and `osascript:` that write down what they were given, so your tests never touch the shared lock or speak aloud. A span speaks only where `speaks?` is true, which needs `host_os:` to name macOS and one of the two stand-ins to be executable. On Windows, `File.executable?` is false for an extensionless shell script, so a span there never speaks. Skip speaking tests unless `speaks?` is true, or a silent span will pass them without proving anything.
+
 ### A session of its own
 
 Set `DESKTOP_INPUT_LOCK` to a path, such as `/tmp/desktop-input-hidden.lock`, and every process started with it locks that file instead, with its marker beside it (`/tmp/desktop-input-hidden.away`). Use it for a session whose keyboard focus and pointer are its own, such as a second user logged in in the background, so its tests stop waiting on yours. Point it only at a path every process of that session can reach, and only where nothing outside the session can take the same focus or pointer.
