@@ -8,7 +8,7 @@
 require_relative "test_helper"
 
 # Which files a process locks: the protocol's, a session's own, or, on
-# Windows, none unless named.
+# Windows, those in ProgramData.
 class PathsTest < Minitest::Test
   include DesktopHelper
   parallelize_me!
@@ -29,8 +29,13 @@ class PathsTest < Minitest::Test
       DesktopInputLock.paths({ "DESKTOP_INPUT_LOCK" => "" }, "darwin25")
   end
 
-  def test_windows_locks_only_what_it_is_given
-    assert_equal [nil, nil], DesktopInputLock.paths({}, "mingw32")
+  # Windows has no /tmp, so every user's processes meet in ProgramData,
+  # the folder every user shares.
+  def test_windows_locks_in_program_data
+    assert_equal ["D:/Data/desktop-input.lock", "D:/Data/desktop-input.away"],
+      DesktopInputLock.paths({ "ProgramData" => "D:/Data" }, "mingw32")
+    assert_equal ["C:/ProgramData/desktop-input.lock", "C:/ProgramData/desktop-input.away"],
+      DesktopInputLock.paths({}, "mingw32")
     assert_equal ['C:\\locks\\desk.lock', 'C:\\locks\\desk.away'],
       DesktopInputLock.paths({ "DESKTOP_INPUT_LOCK" => 'C:\\locks\\desk.lock' }, "mingw32")
   end

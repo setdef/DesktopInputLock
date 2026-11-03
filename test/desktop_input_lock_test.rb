@@ -246,7 +246,7 @@ class DesktopInputLockTest < Minitest::Test
   # Spans nest, and the process lets go of the lock only when the last
   # ends, without waiting on the lock it already holds.
   def test_spans_nest_and_the_last_lets_go
-    in_desktop do |root|
+    in_dir do |root|
       outer = input(root).acquire(speak: false)
       Timeout.timeout(GUARD) { outer.hold(speak: false) { nil } }
 
@@ -260,7 +260,7 @@ class DesktopInputLockTest < Minitest::Test
 
   # Spans on several threads of one process share its one lock.
   def test_spans_on_two_threads_share_the_lock
-    in_desktop do |root|
+    in_dir do |root|
       held = input(root)
       inside = Queue.new
       done = Queue.new
@@ -294,7 +294,7 @@ class DesktopInputLockTest < Minitest::Test
   end
 
   def test_hold_returns_the_blocks_value
-    in_desktop do |root|
+    in_dir do |root|
       assert_equal 42, input(root).hold(speak: false) { 42 }
     end
   end
@@ -374,7 +374,7 @@ class DesktopInputLockTest < Minitest::Test
   # Another process waits while this one holds the lock, saying so once,
   # and goes on when this one lets go.
   def test_a_process_waits_for_the_process_holding_the_lock
-    in_desktop do |root|
+    in_dir do |root|
       held = input(root).acquire(speak: false)
 
       assert_equal "#{DesktopInputLock::WAITING}\nwaited\n", try_from_another_process(root)
@@ -386,17 +386,16 @@ class DesktopInputLockTest < Minitest::Test
   end
 
   def test_hold_gives_the_lock_back_when_the_block_raises
-    in_desktop do |root|
+    in_dir do |root|
       assert_raises(RuntimeError) { input(root).hold(speak: false) { raise "boom" } }
 
       Timeout.timeout(GUARD) { input(root).hold(speak: false) { nil } }
     end
   end
 
-  # With no lock, as on Windows unless given one, a span runs its block
-  # and touches nothing.
+  # With no lock a span runs its block and touches nothing.
   def test_with_no_lock_a_span_only_runs_its_block
-    in_desktop do |root|
+    in_dir do |root|
       none = input(root, lock: nil, marker: nil)
 
       assert_equal :ran, none.hold { :ran }

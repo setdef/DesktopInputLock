@@ -54,19 +54,33 @@ require_relative "desktop_input_lock/version"
 # - A silent span takes the same lock, but never speaks, never writes or
 #   removes the marker, and starts no watcher.
 #
-# The lock is taken on macOS and Linux, on CI too, and even when quiet.
-# On Windows, which has no /tmp, it is taken only at paths you give.
-# A speaking span speaks only on macOS, outside CI, unless
-# +DESKTOP_INPUT_QUIET+ is set, and only where +osascript+ or +say+ is
-# there; elsewhere it is a silent one. Neither the banner nor the voice
-# fails a span, and each is stopped after TELL_LIMIT seconds, so one that
-# hangs cannot hang the process's exit.
+# The lock is taken everywhere, on CI too, and even when quiet. Windows
+# has no /tmp, so there the files are WINDOWS_LOCK and WINDOWS_MARKER in
+# <tt>%ProgramData%</tt>, the folder every user shares.
+#
+# A speaking span speaks only outside CI, unless +DESKTOP_INPUT_QUIET+ is
+# set, and only where it has something to speak with; elsewhere it is a
+# silent one. Each thing it says it first shows as a banner, which takes
+# no focus, for a person whose sound is off, then says aloud:
+#
+# - On macOS, a Notification Center banner through +osascript+, then
+#   +say+.
+# - On a Linux desktop (+DISPLAY+ or +WAYLAND_DISPLAY+ set), a
+#   notification through +notify-send+, then +spd-say+, or +espeak-ng+
+#   where it has no +spd-say+.
+# - On Windows, a toast notification and then the system's own voice,
+#   both through PowerShell.
+#
+# Neither the banner nor the voice fails a span, and each is stopped
+# after TELL_LIMIT seconds, so one that hangs cannot hang the process's
+# exit.
 #
 # Two edges stay open, since closing either would change the protocol: a
 # retrying watcher can find the lock free in the gap between another
-# process's spans and call the person back early, and a person of another
-# user cannot delete a marker left in /tmp, whose sticky bit keeps each
-# user's files their own.
+# process's spans and call the person back early, and a process of one
+# user cannot delete a marker another user's process left in /tmp, whose
+# sticky bit keeps each user's files their own, so it leaves the call
+# back to that user's processes.
 #
 # Spans nest, and spans on several threads of one process share the one
 # lock held while any runs, since a second +flock+ from the same process,
@@ -121,6 +135,38 @@ class DesktopInputLock
   SAY = "/usr/bin/say"
   # What shows a Notification Center banner.
   OSASCRIPT = "/usr/bin/osascript"
+  # The name of the file locked on Windows, in <tt>%ProgramData%</tt>.
+  WINDOWS_LOCK = "desktop-input.lock"
+  # The name of the marker on Windows, in <tt>%ProgramData%</tt>.
+  WINDOWS_MARKER = "desktop-input.away"
+  # What shows a notification on a Linux desktop, found on +PATH+.
+  NOTIFY_SEND = "notify-send"
+  # Speech Dispatcher's voice on a Linux desktop, found on +PATH+.
+  SPD_SAY = "spd-say"
+  # The voice a Linux desktop without Speech Dispatcher may have, found on
+  # +PATH+.
+  ESPEAK_NG = "espeak-ng"
+  # The PowerShell that shows a toast and speaks on Windows, under
+  # <tt>%SystemRoot%</tt>: Windows PowerShell, which every Windows has.
+  POWERSHELL = "System32/WindowsPowerShell/v1.0/powershell.exe"
+  # What Windows PowerShell runs to show <tt>$env:DESKTOP_INPUT_WORDS</tt>
+  # in a toast, under PowerShell's own name, since a toast needs an app
+  # to come from.
+  WINDOWS_BANNER = [
+    "$type = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]",
+    "$toast = $type::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)",
+    "$texts = $toast.GetElementsByTagName('text')",
+    "$null = $texts.Item(0).AppendChild($toast.CreateTextNode('Tests'))",
+    "$null = $texts.Item(1).AppendChild($toast.CreateTextNode($env:DESKTOP_INPUT_WORDS))",
+    '$app = \'{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe\'',
+    "$type::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($toast))",
+  ].join("\n")
+  # What Windows PowerShell runs to say <tt>$env:DESKTOP_INPUT_WORDS</tt>
+  # with the system's own voice, waiting until it is said.
+  WINDOWS_VOICE = [
+    "Add-Type -AssemblyName System.Speech",
+    "(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak($env:DESKTOP_INPUT_WORDS)",
+  ].join("\n")
   # Seconds with no span running before the person is called back.
   SETTLE = 3
   # What the first speaking span says.
@@ -137,7 +183,8 @@ class DesktopInputLock
 
   # The lock and marker a process uses, given its environment and
   # operating system: the file +DESKTOP_INPUT_LOCK+ names and its marker,
-  # LOCK and MARKER, or, on Windows with no such file named, none.
+  # or else LOCK and MARKER, or, on Windows, WINDOWS_LOCK and
+  # WINDOWS_MARKER in <tt>%ProgramData%</tt>.
   #
   # [env] The environment, which may name a session's own lock.
   # [host_os] The operating system.
@@ -153,15 +200,54 @@ class DesktopInputLock
   #   # => ["/tmp/desktop-input.lock", "/tmp/desktop-input.away"]
   #   DesktopInputLock.paths({ "DESKTOP_INPUT_LOCK" => "/tmp/hidden.lock" }, "darwin25")
   #   # => ["/tmp/hidden.lock", "/tmp/hidden.away"]
+  #   DesktopInputLock.paths({ "ProgramData" => "C:/ProgramData" }, "mingw32")
+  #   # => ["C:/ProgramData/desktop-input.lock", "C:/ProgramData/desktop-input.away"]
   #--
   # SPDX-SnippetEnd
   #++
   def self.paths(env, host_os)
     lock = env[SESSION_LOCK]
     return [lock, "#{lock.delete_suffix('.lock')}.away"] if lock && !lock.empty?
-    return [nil, nil] if host_os.match?(/mswin|mingw|cygwin/)
+    return [LOCK, MARKER] unless windows?(host_os)
 
-    [LOCK, MARKER]
+    shared = env["ProgramData"] || "C:/ProgramData"
+    [File.join(shared, WINDOWS_LOCK), File.join(shared, WINDOWS_MARKER)]
+  end
+
+  # Whether +host_os+ names Windows.
+  #
+  # === Example
+  #
+  #--
+  # SPDX-SnippetBegin
+  # SPDX-SnippetCopyrightText: 2026 Kerrick Long <me@kerricklong.com>
+  # SPDX-License-Identifier: MIT-0
+  #++
+  #   DesktopInputLock.windows?("mingw32") # => true
+  #--
+  # SPDX-SnippetEnd
+  #++
+  def self.windows?(host_os)
+    host_os.match?(/mswin|mingw|cygwin/)
+  end
+
+  # The full path of the command +name+ on +PATH+, or +nil+ where it is
+  # not there.
+  #
+  # === Example
+  #
+  #--
+  # SPDX-SnippetBegin
+  # SPDX-SnippetCopyrightText: 2026 Kerrick Long <me@kerricklong.com>
+  # SPDX-License-Identifier: MIT-0
+  #++
+  #   DesktopInputLock.find("notify-send") # => "/usr/bin/notify-send", on most Linux desktops
+  #--
+  # SPDX-SnippetEnd
+  #++
+  def self.find(name)
+    ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).map { |dir| File.join(dir, name) }
+      .find { |path| File.file?(path) && File.executable?(path) }
   end
 
   # Creates a lock of its own, for a test of the lock or a process that
@@ -170,13 +256,19 @@ class DesktopInputLock
   #
   # [lock] The file locked, or +nil+ to lock nothing.
   # [marker] The file that says the person was told to step away.
-  # [say] The speech synthesizer, given the words to say.
-  # [osascript] What runs the AppleScript that shows the banner.
+  # [say] macOS's speech synthesizer, given the words to say.
+  # [osascript] What runs the AppleScript that shows macOS's banner.
   # [settle] Seconds with no span running before COME_BACK.
-  # [env] The environment that can quiet it (+CI+, +DESKTOP_INPUT_QUIET+).
-  # [host_os] The operating system, which speaks only when it is macOS.
+  # [env] The environment that can quiet it (+CI+, +DESKTOP_INPUT_QUIET+),
+  #       and that says whether Linux has a desktop (+DISPLAY+,
+  #       +WAYLAND_DISPLAY+).
+  # [host_os] The operating system, which decides how it speaks.
   # [log] Where WAITING is printed.
   # [tell_limit] Seconds the banner, and then the voice, may take.
+  # [notify_send] What shows a Linux desktop's notification, or +nil+.
+  # [spd_say] Speech Dispatcher's voice on Linux, or +nil+.
+  # [espeak_ng] The Linux voice used where there is no +spd_say+, or +nil+.
+  # [powershell] The Windows PowerShell that shows a toast and speaks.
   #
   # === Example
   #
@@ -191,12 +283,18 @@ class DesktopInputLock
   # SPDX-SnippetEnd
   #++
   def initialize(lock: LOCK, marker: MARKER, say: SAY, osascript: OSASCRIPT, settle: SETTLE, env: ENV,
-    host_os: RbConfig::CONFIG["host_os"], log: $stderr, tell_limit: TELL_LIMIT
+    host_os: RbConfig::CONFIG["host_os"], log: $stderr, tell_limit: TELL_LIMIT,
+    notify_send: DesktopInputLock.find(NOTIFY_SEND), spd_say: DesktopInputLock.find(SPD_SAY),
+    espeak_ng: DesktopInputLock.find(ESPEAK_NG), powershell: File.join(ENV["SystemRoot"] || "C:/Windows", POWERSHELL)
   )
     @lock = lock
     @marker = marker
     @say = say
     @osascript = osascript
+    @notify_send = notify_send
+    @spd_say = spd_say
+    @espeak_ng = espeak_ng
+    @powershell = powershell
     @settle = settle
     @env = env
     @host_os = host_os
@@ -287,9 +385,11 @@ class DesktopInputLock
     end
   end
 
-  # Whether a speaking span speaks here: on macOS, outside CI, unless
-  # +DESKTOP_INPUT_QUIET+ is set, and only with +osascript+ or +say+ to
-  # speak with.
+  # Whether a speaking span speaks here: outside CI, unless
+  # +DESKTOP_INPUT_QUIET+ is set, with a lock to hold, and with something
+  # to speak with: +osascript+ or +say+ on macOS, a desktop and
+  # +notify-send+, +spd-say+, or +espeak-ng+ on Linux, PowerShell on
+  # Windows.
   #
   # === Example
   #
@@ -303,10 +403,14 @@ class DesktopInputLock
   # SPDX-SnippetEnd
   #++
   def speaks?
-    return false unless @lock && @host_os.include?("darwin")
-    return false unless @env["CI"].nil? && @env["DESKTOP_INPUT_QUIET"].nil?
+    return false unless @lock && @env["CI"].nil? && @env["DESKTOP_INPUT_QUIET"].nil?
 
-    File.executable?(@osascript) || File.executable?(@say)
+    case system_kind
+    when :macos then executable?(@osascript) || executable?(@say)
+    when :linux then desktop? && [@notify_send, @spd_say, @espeak_ng].any? { |command| executable?(command) }
+    when :windows then executable?(@powershell)
+    else false
+    end
   end
 
   # Calls the person back, once SETTLE seconds have passed since the last
@@ -476,24 +580,82 @@ class DesktopInputLock
     return File.exist?(marker) ? :busy : :gone unless file.flock(File::LOCK_EX | File::LOCK_NB)
     return :gone unless File.exist?(marker)
 
-    File.delete(marker)
+    return :gone unless remove(marker)
+
     tell(COME_BACK)
     :called
   end
 
-  # Shows +words+ in a banner, then says them, waiting until they are said.
-  # The banner's output is dropped, so a refused notification prints
-  # nothing into the tests' output.
-  private def tell(words)
-    run(@osascript, "-e", "display notification #{words.dump} with title \"Tests\"") if File.executable?(@osascript)
-    run(@say, words) if File.executable?(@say)
+  # Removes the marker, or, when another user's process left it where
+  # this one may not delete it, leaves it, and the call back, to that
+  # user's processes. Returns whether it is gone.
+  private def remove(marker)
+    File.delete(marker)
+    true
+  rescue Errno::EACCES, Errno::EPERM
+    false
   end
 
-  # Runs +command+ and waits for it, as system does, for at most
-  # @tell_limit seconds, then stops it. A command that cannot start is
-  # skipped, as system(exception: false) skips it.
-  private def run(*command)
-    pid = spawn(*command, out: File::NULL, err: File::NULL)
+  # Shows +words+ in a banner, then says them, waiting until they are said.
+  # Every command's output is dropped, so a refused notification prints
+  # nothing into the tests' output.
+  private def tell(words)
+    case system_kind
+    when :macos then tell_macos(words)
+    when :linux then tell_linux(words)
+    when :windows then tell_windows(words)
+    end
+  end
+
+  private def tell_macos(words)
+    run([@osascript, "-e", "display notification #{words.dump} with title \"Tests\""]) if executable?(@osascript)
+    run([@say, words]) if executable?(@say)
+  end
+
+  private def tell_linux(words)
+    notify_send = @notify_send
+    spd_say = @spd_say
+    espeak_ng = @espeak_ng
+    run([notify_send, "Tests", words]) if notify_send && executable?(notify_send)
+    if spd_say && executable?(spd_say)
+      run([spd_say, "--wait", words])
+    elsif espeak_ng && executable?(espeak_ng)
+      run([espeak_ng, words])
+    end
+  end
+
+  # PowerShell reads the words from its environment, so nothing in them
+  # can change the script it runs.
+  private def tell_windows(words)
+    return unless executable?(@powershell)
+
+    { "banner" => WINDOWS_BANNER, "voice" => WINDOWS_VOICE }.each do |part, script|
+      run([@powershell, "-NoProfile", "-NonInteractive", "-Command", script],
+        env: { "DESKTOP_INPUT_WORDS" => words, "DESKTOP_INPUT_TELL" => part })
+    end
+  end
+
+  private def system_kind
+    if @host_os.include?("darwin") then :macos
+    elsif @host_os.include?("linux") then :linux
+    elsif DesktopInputLock.windows?(@host_os) then :windows
+    end
+  end
+
+  private def desktop?
+    [@env["DISPLAY"], @env["WAYLAND_DISPLAY"]].any? { |display| display && !display.empty? }
+  end
+
+  private def executable?(command)
+    !command.nil? && File.file?(command) && File.executable?(command)
+  end
+
+  # Runs +command+, with +env+ added to its environment, and waits for
+  # it, as system does, for at most @tell_limit seconds, then stops it. A
+  # command that cannot start is skipped, as system(exception: false)
+  # skips it.
+  private def run(command, env: {})
+    pid = spawn(env, *command, out: File::NULL, err: File::NULL)
     deadline = now + @tell_limit
     until Process.wait(pid, Process::WNOHANG)
       next sleep(0.05) if now < deadline

@@ -82,13 +82,21 @@ It is silent unless you pass `--speak`. It exits with the command's status, or 1
 
 ### Where it locks and speaks
 
-It locks `/tmp/desktop-input.lock` on macOS and Linux, on CI too, and even when quiet, since its purpose is that two runs never collide. On Windows it does nothing unless you name a lock.
+It locks `/tmp/desktop-input.lock` on macOS and Linux, and `%ProgramData%\desktop-input.lock` on Windows, which has no `/tmp`. It locks on CI too, and even when quiet, since its purpose is that two runs never collide.
 
-It speaks only on macOS, outside CI, and unless `DESKTOP_INPUT_QUIET` is set. Each message shows first as a Notification Center banner, which takes no focus, for a person whose sound is off, then is said with `say`. A Mac with neither `osascript` nor `say` stays silent.
+It speaks outside CI, unless `DESKTOP_INPUT_QUIET` is set. Each message shows first as a banner, which takes no focus, for a person whose sound is off, then is said aloud:
+
+| System | Banner | Voice |
+|---|---|---|
+| macOS | Notification Center, through `osascript` | `say` |
+| Linux, on a desktop (`DISPLAY` or `WAYLAND_DISPLAY` set) | `notify-send` | `spd-say`, or else `espeak-ng` |
+| Windows | a toast, through PowerShell | the system's voice, through PowerShell |
+
+Where it has nothing to speak with, or no desktop to speak on, a speaking span is a silent one.
 
 ### Testing your own use of it
 
-Give `DesktopInputLock.new` paths of your test's own (`lock:`, `marker:`) and stand-ins for `say:` and `osascript:` that write down what they were given, so your tests never touch the shared lock or speak aloud. A span speaks only where `speaks?` is true, which needs `host_os:` to name macOS and one of the two stand-ins to be executable. On Windows, `File.executable?` is false for an extensionless shell script, so a span there never speaks. Skip speaking tests unless `speaks?` is true, or a silent span will pass them without proving anything.
+Give `DesktopInputLock.new` paths of your test's own (`lock:`, `marker:`) and stand-ins for `say:` and `osascript:` that write down what they were given, so your tests never touch the shared lock or speak aloud. A span speaks only where `speaks?` is true, which needs `host_os:` to name the system and one of its stand-ins (`notify_send:`, `spd_say:`, or `espeak_ng:` with a `DISPLAY` in `env:` on Linux, `powershell:` on Windows) to be executable. On Windows, `File.executable?` is false for an extensionless shell script, so a span there never speaks. Skip speaking tests unless `speaks?` is true, or a silent span will pass them without proving anything.
 
 ### A session of its own
 

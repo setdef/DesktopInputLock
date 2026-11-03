@@ -12,6 +12,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-03
+
+### Added
+
+- A speaking span speaks on a Linux desktop: a notification through `notify-send`, then `spd-say`, or `espeak-ng` where there is no `spd-say`. `DesktopInputLock.new` takes `notify_send:`, `spd_say:`, and `espeak_ng:`.
+- A speaking span speaks on Windows: a toast, then the system's voice, both through Windows PowerShell. `DesktopInputLock.new` takes `powershell:`.
+- `DesktopInputLock.windows?` and `DesktopInputLock.find`.
+
+### Changed
+
+- On Windows the lock is `%ProgramData%\desktop-input.lock`, with its marker beside it, rather than nothing unless named.
+
+### Fixed
+
+- A marker another user's process left where this one may not delete it no longer raises in the watcher or at exit; it is left to that user's processes.
+
 ## [0.1.0] - 2026-11-02
 
 ### Added

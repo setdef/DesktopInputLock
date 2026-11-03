@@ -36,7 +36,8 @@ module DesktopHelper
     dir = ARGV.fetch(0)
     input = DesktopInputLock.new(lock: File.join(dir, "lock"), marker: File.join(dir, "away"),
       say: File.join(dir, "say"), osascript: File.join(dir, "osascript"), settle: #{SETTLE}, env: {},
-      host_os: "darwin")
+      host_os: "darwin", notify_send: File.join(dir, "notify-send"), spd_say: File.join(dir, "spd-say"),
+      espeak_ng: File.join(dir, "espeak-ng"), powershell: File.join(dir, "powershell"))
     def waiting?(name)
       File.read(File.join(ARGV.fetch(0), name)).include?(DesktopInputLock::WAITING)
     rescue Errno::ENOENT
@@ -44,6 +45,13 @@ module DesktopHelper
     end
     def hand_over_to(name) = (sleep 0.01 until waiting?(name))
   RUBY
+
+  # Yields a fresh, empty directory, its real path, since macOS links
+  # /var to /private/var, for a test that needs a lock and nothing to
+  # speak with, and so runs on every system.
+  def in_dir
+    Dir.mktmpdir("desktop-input-lock-test") { |dir| yield File.realpath(dir) }
+  end
 
   # Yields a fresh directory (its real path, since macOS links /var to
   # /private/var) with recording say and osascript scripts in it. The
@@ -94,8 +102,8 @@ module DesktopHelper
     raise
   end
 
-  # What the person is shown and told of +words+, in order: each first as
-  # a banner, then aloud.
+  # What the person is shown and told of +words+ on macOS, in order: each
+  # first as a banner, then aloud.
   def told(*words)
     words.flat_map { |text| ["osascript -e display notification #{text.dump} with title \"Tests\"", "say: #{text}"] }
   end
@@ -104,8 +112,15 @@ module DesktopHelper
 
   # A DesktopInputLock in this process over the desktop at +root+.
   def input(root, **)
-    DesktopInputLock.new(lock: File.join(root, "lock"), marker: File.join(root, "away"), say: File.join(root, "say"),
-      osascript: File.join(root, "osascript"), settle: SETTLE, env: {}, host_os: "darwin", log: StringIO.new, **)
+    DesktopInputLock.new(lock: File.join(root, "lock"), marker: File.join(root, "away"), **stand_ins(root),
+      settle: SETTLE, env: {}, host_os: "darwin", log: StringIO.new, **)
+  end
+
+  # Every command the lock speaks with, at a path under +root+, so no
+  # test finds the real ones on the machine it runs on.
+  def stand_ins(root)
+    %w[say osascript notify-send spd-say espeak-ng powershell]
+      .to_h { |name| [name.tr("-", "_").to_sym, File.join(root, name)] }
   end
 
   def wait_for(path) = wait_until { File.exist?(path) }

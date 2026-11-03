@@ -14,6 +14,14 @@ class DesktopInputLock
   MARKER: String
   SAY: String
   OSASCRIPT: String
+  WINDOWS_LOCK: String
+  WINDOWS_MARKER: String
+  NOTIFY_SEND: String
+  SPD_SAY: String
+  ESPEAK_NG: String
+  POWERSHELL: String
+  WINDOWS_BANNER: String
+  WINDOWS_VOICE: String
   SETTLE: Integer
   STEP_AWAY: String
   COME_BACK: String
@@ -22,14 +30,19 @@ class DesktopInputLock
   SESSION_LOCK: String
   DEFAULT: DesktopInputLock
 
-  def self.paths: (_Env env, String host_os) -> [String?, String?]
+  def self.paths: (_Env env, String host_os) -> [String, String]
+
+  def self.windows?: (String host_os) -> bool
+
+  def self.find: (String name) -> String?
 
   def self.hold: [T] (?speak: bool) { () -> T } -> T
 
   def self.acquire: (?speak: bool) -> DesktopInputLock
 
   def initialize: (?lock: String?, ?marker: String?, ?say: String, ?osascript: String, ?settle: Integer | Float,
-    ?env: _Env, ?host_os: String, ?log: _Log, ?tell_limit: Integer | Float) -> void
+    ?env: _Env, ?host_os: String, ?log: _Log, ?tell_limit: Integer | Float, ?notify_send: String?,
+    ?spd_say: String?, ?espeak_ng: String?, ?powershell: String) -> void
 
   def hold: [T] (?speak: bool) { () -> T } -> T
 
@@ -51,6 +64,10 @@ class DesktopInputLock
   @marker: String?
   @say: String
   @osascript: String
+  @notify_send: String?
+  @spd_say: String?
+  @espeak_ng: String?
+  @powershell: String
   @settle: Integer | Float
   @env: _Env
   @host_os: String
@@ -83,9 +100,23 @@ class DesktopInputLock
 
   def come_back_holding: (File file, String marker) -> (:called | :busy | :gone)
 
+  def remove: (String marker) -> bool
+
   def tell: (String words) -> void
 
-  def run: (*String command) -> void
+  def tell_macos: (String words) -> void
+
+  def tell_linux: (String words) -> void
+
+  def tell_windows: (String words) -> void
+
+  def system_kind: () -> (:macos | :linux | :windows | nil)
+
+  def desktop?: () -> bool
+
+  def executable?: (String? command) -> bool
+
+  def run: (Array[String] command, ?env: Hash[String, String]) -> void
 
   def now: () -> Float
 end
